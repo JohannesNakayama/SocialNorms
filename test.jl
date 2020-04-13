@@ -5,7 +5,7 @@ using PyPlot
 
 mutable struct CircularBitArray
     array::BitArray
-    function CircularBitArray(b::BitArray)
+    function CircularBitArray(b::BitArray, rng=Random.MersenneTwister(0))
         new(b)
     end
 end
@@ -45,59 +45,6 @@ function get_k_neighborhood(circ_bit_arr::CircularBitArray, index, k)
 
 end
 
-function compute_norm(agent_list::CircularBitArray, agent::Int64, radius::Int64)
-    return Statistics.mean(get_k_neighborhood(agent_list, agent, radius))
-end
-
-function update_radius!(radius_list, agent_list, current_agent, tolerance)
-
-    # current properties
-    current_radius = radius_list[current_agent]
-    current_norm = agent_list.array[current_agent]
-
-    if (current_radius < (length(agent_list) \ 2) - 1 & current_radius > 1)
-
-
-        # update radius
-        if (
-            abs(compute_norm(agent_list, current_agent, current_radius)
-            - compute_norm(agent_list, current_agent, current_radius + 1)) > tolerance
-        )
-            radius_list[current_agent] += 1
-        elseif (
-            abs(compute_norm(agent_list, current_agent, current_radius)
-            - compute_norm(agent_list, current_agent, current_radius - 1)) < tolerance
-        )
-            radius_list[current_agent] -= 1
-        end
-
-    end
-
-    return radius_list
-
-end
-
-function update_norm!(agent_list, radius_list, current_agent, noise=0.0)
-
-    current_radius = radius_list[current_agent]
-    current_norm = agent_list.array[current_agent]
-
-    computed_norm = compute_norm(agent_list, current_agent, current_radius)
-
-    if computed_norm > 0.5
-        agent_list.array[current_agent] = true
-    elseif computed_norm < 0.5
-        agent_list.array[current_agent] = false
-    end
-
-    if Random.rand() < noise
-        agent_list.array[current_agent] = Random.bitrand(1)[1]
-    end
-
-    return agent_list
-
-end
-
 mutable struct Config
 
     agent_list::CircularBitArray
@@ -111,11 +58,12 @@ mutable struct Config
         max_radius,
         tolerance,
         sim_iterations,
-        noise=0.0
+        noise=0.0,
+        rng=Random.MersenneTwister(0)
     )
         new(
             circ_bit_arr,
-            Random.rand(1:max_radius, length(circ_bit_arr)),
+            Random.rand!(rng, zeros(length(circ_bit_arr)), 1:max_radius),
             tolerance,
             sim_iterations,
             noise
@@ -124,12 +72,67 @@ mutable struct Config
 
 end
 
-function tick!(state, config)
+function compute_norm(agent_list::CircularBitArray, agent::Int64, radius::Int64)
+    return Statistics.mean(get_k_neighborhood(agent_list, agent, radius))
+end
+
+function update_radius!(radius_list, agent_list, current_agent, tolerance)
+
+    # current properties
+    current_radius = radius_list[current_agent]
+    current_norm = agent_list.array[current_agent]
+
+    # update radius
+    if (
+        (abs(compute_norm(agent_list, current_agent, current_radius)
+            - compute_norm(agent_list, current_agent, current_radius + 1))
+        > tolerance)
+        & (current_radius < ((length(agent_list) / 2) - 1))
+    )
+        radius_list[current_agent] += 1
+        print("INCREASED")
+    elseif (
+        (abs(compute_norm(agent_list, current_agent, current_radius)
+            - compute_norm(agent_list, current_agent, current_radius - 1))
+        < tolerance)
+        & (current_radius > 1)
+    )
+        radius_list[current_agent] -= 1
+        print("DECREASED")
+    end
+
+    return radius_list
+
+end
+
+function update_norm!(agent_list, radius_list, current_agent, noise=0.0, rng=Random.MersenneTwister(0))
+
+    current_radius = radius_list[current_agent]
+    current_norm = agent_list.array[current_agent]
+    computed_norm = compute_norm(agent_list, current_agent, current_radius)
+
+    # update norm regularly
+    if computed_norm > 0.5
+        agent_list.array[current_agent] = true
+    elseif computed_norm < 0.5
+        agent_list.array[current_agent] = false
+    end
+
+    # introduce some noise
+    if rand(rng, Float64) < noise
+        agent_list.array[current_agent] = Random.bitrand(rng, 1)[1]
+    end
+
+    return agent_list
+
+end
+
+function tick!(state, config, rng=Random.MersenneTwister(0))
 
     for i in 1:length(state[1])
-        adapting_agent = Random.rand(1:length(state[1]))
+        adapting_agent = rand(rng, 1:length(state[1]))
         update_radius!(state[2], state[1], adapting_agent, config.tolerance)
-        update_norm!(state[1], state[2], adapting_agent)
+        update_norm!(state[1], state[2], adapting_agent, config.noise, rng)
     end
 
     return state
@@ -138,9 +141,12 @@ end
 
 function simulate(config; display=true)
 
-    state = (deepcopy(config.agent_list), deepcopy(config.radius_list))
-    norm_matrix = zeros(Int64, config.sim_iterations + 1, length(config.agent_list))
-    radius_matrix = zeros(Int64, config.sim_iterations + 1, length(config.agent_list))
+    agent_list = deepcopy(config.agent_list)
+    radius_list = deepcopy(config.radius_list)
+    state = (agent_list, radius_list)
+
+    norm_matrix = zeros(Int64, config.sim_iterations + 1, length(state[1]))
+    radius_matrix = zeros(Int64, config.sim_iterations + 1, length(state[1]))
 
     # add initial state to matrices
     norm_matrix[1, :] = state[1].array
@@ -189,20 +195,22 @@ function display_results(results)
 end
 
 # simulation runs
-cfg = Config(
-    CircularBitArray(50),
-    15,
+Random.seed!(7)
+cfg1 = Config(
+    CircularBitArray(191),
+    20,
     0.05,
-    10,
-    0.8
+    400,
+    0.0
 )
-cfg2 = Config(
-    CircularBitArray(BitArray(zeros(50))),
-    15,
-    0.05,
-    100,
-    0.8
-)
-results = simulate(cfg2)
+simulate(cfg1)
 
-# TO DO: debug update_radius!() 
+Random.seed!(2)
+cfg2 = Config(
+    CircularBitArray(BitArray(zeros(191))),
+    60,
+    0.05,
+    400,
+    0.0
+)
+res2 = simulate(cfg2)
