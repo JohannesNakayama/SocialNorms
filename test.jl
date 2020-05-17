@@ -46,9 +46,6 @@ function get_k_neighborhood(circ_bit_arr::CircularBitArray, index, k)
 end
 
 
-# this is a change for demonstration
-
-
 mutable struct Config
 
     agent_list::CircularBitArray
